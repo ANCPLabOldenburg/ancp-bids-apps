@@ -2,58 +2,71 @@ import argparse
 import itertools
 import os
 import re
+import math
 from warnings import warn
 
+import matplotlib.pyplot as plt
 import pandas as pd
 from joblib import Memory
 from nilearn import plotting
 from nilearn.glm.first_level import FirstLevelModel
 from scipy.stats import norm
-import matplotlib.pyplot as plt
 
 import ancpbids
 import ancpbids.model as schema
-import ancpbidsapps.app
+from ancpbidsapps.app import App
 
 CONTRAST_REGEX = re.compile(r"\w+-\w+")
 
 
-class NilearnFirstLevelApp(ancpbidsapps.app.App):
+class NilearnFirstLevelApp(App):
+    """
+    First level analysis of a BIDS dataset using Nilearn facilities.
+    """
+
     def get_args_parser(self):
         parser = argparse.ArgumentParser()
-        parser.add_argument('-dsp', '--dataset_path', type=str,
+        parser.add_argument('-dp', '--dataset_path', type=str, required=True,
                             help='the dataset path containing a BIDS compliant dataset')
-        parser.add_argument('-tl', '--task_label', type=str, help='the task name of the experiment')
-        parser.add_argument('-if', '--img_filters', type=str, nargs='*',
-                            help='a list of filters to limit to specific imaging files')
-        parser.add_argument('-c', '--contrast', type=str,
+        parser.add_argument('-tl', '--task_label', type=str, required=True, help='the task name of the experiment')
+        parser.add_argument('-c', '--contrast', type=str, required=True,
                             help='two conditions to use as contrast, '
                                  'example: language-idle, where "languagee" is first condition '
                                  'and "idle" the second to contrast with')
+        parser.add_argument('-if', '--img_filters', type=str, nargs='*',
+                            help='a list of filters to limit to specific imaging files')
         return parser
 
     def execute(self, **args):
         dataset_path, task_label, img_filters = args['dataset_path'], args['task_label'], args['img_filters']
+        contrast = args['contrast']
         # simulate itertools.pairwise()
         img_filters = list(zip(*(itertools.islice(img_filters, i, None) for i in range(2))))
 
         # derive data for fitting
-        models, models_run_imgs, models_events, models_confounds = self.first_level(dataset_path=dataset_path,
-                                                                                    task_label=task_label,
-                                                                                    img_filters=img_filters)
+        models, models_run_imgs, models_events, models_confounds, layout, layout_derivatives = self.first_level(
+            dataset_path=dataset_path,
+            task_label=task_label,
+            img_filters=img_filters)
         p001_unc = norm.isf(0.001)
-
-        fig, axes = plt.subplots(nrows=2, ncols=5, figsize=(8, 4.5))
+        nsubj = len(layout.get_subjects())
+        ncols = int(math.sqrt(nsubj))
+        nrows = int(nsubj / ncols)
+        nrows = nrows + (nsubj - ncols * nrows)
+        fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(8, 4.5))
         model_and_args = zip(models, models_run_imgs, models_events, models_confounds)
         for midx, (model, imgs, events, confounds) in enumerate(model_and_args):
             # fit the GLM
             model.fit(imgs, events, confounds)
             # compute the contrast of interest
-            zmap = model.compute_contrast('language-string')
+            zmap = model.compute_contrast(contrast)
             plotting.plot_glass_brain(zmap, colorbar=False, threshold=p001_unc,
                                       title=('sub-' + model.subject_label),
-                                      axes=axes[int(midx / 5), int(midx % 5)],
+                                      axes=axes[int(midx / ncols), int(midx % ncols)],
                                       plot_abs=False, display_mode='x')
+        # remove empty subplots
+        for ax in axes.flat[nsubj:]:
+            ax.remove()
         fig.suptitle('subjects z_map language network (unc p<0.001)')
         plotting.show()
 
@@ -319,4 +332,4 @@ class NilearnFirstLevelApp(ancpbidsapps.app.App):
                              for c in confounds]
                 models_confounds.append(confounds)
 
-        return models, models_run_imgs, models_events, models_confounds
+        return models, models_run_imgs, models_events, models_confounds, layout, layout_derivative
