@@ -28,6 +28,8 @@ class NilearnFirstLevelApp(App):
         parser = argparse.ArgumentParser()
         parser.add_argument('-dp', '--dataset_path', type=str, required=True,
                             help='the dataset path containing a BIDS compliant dataset')
+        parser.add_argument('-dvf', '--derivatives_folder', type=str, required=True,
+                            help='the fmriprep generated preprocessing folder')
         parser.add_argument('-tl', '--task_label', type=str, required=True, help='the task name of the experiment')
         parser.add_argument('-c', '--contrast', type=str, required=True,
                             help='two conditions to use as contrast, '
@@ -38,7 +40,8 @@ class NilearnFirstLevelApp(App):
         return parser
 
     def execute(self, **args):
-        dataset_path, task_label, img_filters = args['dataset_path'], args['task_label'], args['img_filters']
+        dataset_path, task_label, img_filters, derivatives_folder = args['dataset_path'], args['task_label'], args[
+            'img_filters'], args['derivatives_folder']
         contrast = args['contrast']
         # simulate itertools.pairwise()
         img_filters = list(zip(*(itertools.islice(img_filters, i, None) for i in range(2))))
@@ -47,30 +50,66 @@ class NilearnFirstLevelApp(App):
         models, models_run_imgs, models_events, models_confounds, layout, layout_derivatives = self.first_level(
             dataset_path=dataset_path,
             task_label=task_label,
+            derivatives_folder=derivatives_folder,
             img_filters=img_filters)
         p001_unc = norm.isf(0.001)
-        nsubj = len(layout.get_subjects())
+        nsubj = len(models)
         ncols = int(math.sqrt(nsubj))
         nrows = int(nsubj / ncols)
         nrows = nrows + (nsubj - ncols * nrows)
         fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(8, 4.5))
         model_and_args = zip(models, models_run_imgs, models_events, models_confounds)
+
+        dataset: schema.Dataset = layout.dataset
+        derivative = dataset.create_derivative(name="ancpbidsfla")
+        derivative.dataset_description.GeneratedBy.Name = "AncpBIDS First Level Analysis Example Pipeline"
+
         for midx, (model, imgs, events, confounds) in enumerate(model_and_args):
+            subject = derivative.create_folder(type_=schema.Subject, name='sub-' + model.subject_label)
+
             # fit the GLM
             model.fit(imgs, events, confounds)
+
             # compute the contrast of interest
             zmap = model.compute_contrast(contrast)
+            zmap_artifact = subject.create_artifact()
+            zmap_artifact.add_entity(schema.EntityEnum.description, "nilearn")
+            zmap_artifact.add_entity(schema.EntityEnum.task, task_label)
+            zmap_artifact.suffix = 'zmap'
+            zmap_artifact.extension = ".nii.gz"
+            zmap_artifact.content = lambda file_path: zmap.to_filename(file_path)
+
             plotting.plot_glass_brain(zmap, colorbar=False, threshold=p001_unc,
-                                      title=('sub-' + model.subject_label),
-                                      axes=axes[int(midx / ncols), int(midx % ncols)],
+                                      title=subject.name,
+                                      axes=axes[
+                                          int(midx / ncols), int(midx % ncols)],
                                       plot_abs=False, display_mode='x')
+
+            plot_artifact = subject.create_artifact()
+            plot_artifact.add_entity(schema.EntityEnum.description, "nilearn")
+            plot_artifact.add_entity(schema.EntityEnum.task, task_label)
+            plot_artifact.suffix = "zmap"
+            plot_artifact.extension = ".png"
+            plot_artifact.content = lambda file_path: plotting.plot_glass_brain(zmap, colorbar=False,
+                                                                                threshold=p001_unc,
+                                                                                title=subject.name,
+                                                                                plot_abs=False, display_mode='x',
+                                                                                output_file=file_path)
         # remove empty subplots
         for ax in axes.flat[nsubj:]:
             ax.remove()
-        fig.suptitle('subjects z_map language network (unc p<0.001)')
-        plotting.show()
+        fig.suptitle('subjects z_map contrast %s (unc p<%f)' % (contrast, p001_unc))
 
-    def first_level(self, dataset_path, task_label, space_label=None,
+        fig_artifact = derivative.create_artifact()
+        fig_artifact.add_entity(schema.EntityEnum.description, "nilearn")
+        fig_artifact.add_entity(schema.EntityEnum.task, task_label)
+        fig_artifact.suffix = "zmap"
+        fig_artifact.extension = ".png"
+        fig_artifact.content = lambda file_path: fig.savefig(fname=file_path)
+
+        layout.dataset.write_derivative(derivative)
+
+    def first_level(self, dataset_path, task_label, derivatives_folder, space_label=None,
                     img_filters=None, t_r=None, slice_time_ref=0.,
                     hrf_model='glover', drift_model='cosine',
                     high_pass=.01, drift_order=1, fir_delays=[0],
@@ -80,8 +119,7 @@ class NilearnFirstLevelApp(App):
                     memory_level=1, standardize=False,
                     signal_scaling=0, noise_model='ar1',
                     verbose=0, n_jobs=1,
-                    minimize_memory=True,
-                    derivatives_folder='derivatives'):
+                    minimize_memory=True):
         """Create FirstLevelModel objects and fit arguments from a BIDS dataset.
 
         It t_r is not specified this function will attempt to load it from a
