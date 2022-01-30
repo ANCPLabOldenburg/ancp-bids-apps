@@ -107,7 +107,7 @@ class NilearnFirstLevelApp(App):
         fig_artifact.extension = ".png"
         fig_artifact.content = lambda file_path: fig.savefig(fname=file_path)
 
-        layout.dataset.write_derivative(derivative)
+        ancpbids.write_derivative(layout.dataset, derivative)
 
     def first_level(self, dataset_path, task_label, derivatives_folder, space_label=None,
                     img_filters=None, t_r=None, slice_time_ref=0.,
