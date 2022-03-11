@@ -13,8 +13,8 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('-a', '--app', type=str, help="the (registered) app to run, example: "
-                                                      "-a nilearnfirstlevelapp")
+    parser.add_argument('-a', '--app', type=str, required=True, help="the (registered) app to run, example: "
+                                                                     "-a nilearnfirstlevelapp")
     parser.add_argument('-l', '--list', action='store_true', help="a list of all registered apps")
     parser.add_argument('--args', nargs=argparse.REMAINDER)
     args = parser.parse_args()

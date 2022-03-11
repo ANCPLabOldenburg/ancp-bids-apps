@@ -13,7 +13,6 @@ from nilearn.glm.first_level import FirstLevelModel
 from scipy.stats import norm
 
 import ancpbids
-import ancpbids.model as schema
 from ancpbidsapps.app import App
 
 CONTRAST_REGEX = re.compile(r"\w+-\w+")
@@ -44,11 +43,15 @@ class NilearnFirstLevelApp(App):
             'img_filters'], args['derivatives_folder']
         contrast = args['contrast']
         # simulate itertools.pairwise()
-        img_filters = list(zip(*(itertools.islice(img_filters, i, None) for i in range(2))))
+        if img_filters:
+            img_filters = list(zip(*(itertools.islice(img_filters, i, None) for i in range(2))))
+
+        layout = ancpbids.BIDSLayout(dataset_path)
+        schema = layout.schema
 
         # derive data for fitting
-        models, models_run_imgs, models_events, models_confounds, layout, layout_derivatives = self.first_level(
-            dataset_path=dataset_path,
+        models, models_run_imgs, models_events, models_confounds = self.first_level(
+            layout=layout,
             task_label=task_label,
             derivatives_folder=derivatives_folder,
             img_filters=img_filters)
@@ -60,8 +63,7 @@ class NilearnFirstLevelApp(App):
         fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(8, 4.5))
         model_and_args = zip(models, models_run_imgs, models_events, models_confounds)
 
-        dataset: schema.Dataset = layout.dataset
-        derivative = dataset.create_derivative(name="ancpbidsfla")
+        derivative = layout.dataset.create_derivative(name="ancpbidsfla")
         derivative.dataset_description.GeneratedBy.Name = "AncpBIDS First Level Analysis Example Pipeline"
 
         for midx, (model, imgs, events, confounds) in enumerate(model_and_args):
@@ -73,8 +75,8 @@ class NilearnFirstLevelApp(App):
             # compute the contrast of interest
             zmap = model.compute_contrast(contrast)
             zmap_artifact = subject.create_artifact()
-            zmap_artifact.add_entity(schema.EntityEnum.description, "nilearn")
-            zmap_artifact.add_entity(schema.EntityEnum.task, task_label)
+            zmap_artifact.add_entity('desc', "nilearn")
+            zmap_artifact.add_entity('task', task_label)
             zmap_artifact.suffix = 'zmap'
             zmap_artifact.extension = ".nii.gz"
             zmap_artifact.content = lambda file_path: zmap.to_filename(file_path)
@@ -86,8 +88,8 @@ class NilearnFirstLevelApp(App):
                                       plot_abs=False, display_mode='x')
 
             plot_artifact = subject.create_artifact()
-            plot_artifact.add_entity(schema.EntityEnum.description, "nilearn")
-            plot_artifact.add_entity(schema.EntityEnum.task, task_label)
+            plot_artifact.add_entity('descr', "nilearn")
+            plot_artifact.add_entity('task', task_label)
             plot_artifact.suffix = "zmap"
             plot_artifact.extension = ".png"
             plot_artifact.content = lambda file_path: plotting.plot_glass_brain(zmap, colorbar=False,
@@ -101,15 +103,15 @@ class NilearnFirstLevelApp(App):
         fig.suptitle('subjects z_map contrast %s (unc p<%f)' % (contrast, p001_unc))
 
         fig_artifact = derivative.create_artifact()
-        fig_artifact.add_entity(schema.EntityEnum.description, "nilearn")
-        fig_artifact.add_entity(schema.EntityEnum.task, task_label)
+        fig_artifact.add_entity('descr', "nilearn")
+        fig_artifact.add_entity('task', task_label)
         fig_artifact.suffix = "zmap"
         fig_artifact.extension = ".png"
         fig_artifact.content = lambda file_path: fig.savefig(fname=file_path)
 
-        ancpbids.write_derivative(layout.dataset, derivative)
+        layout.write_derivative(derivative)
 
-    def first_level(self, dataset_path, task_label, derivatives_folder, space_label=None,
+    def first_level(self, layout: ancpbids.BIDSLayout, task_label, derivatives_folder, space_label=None,
                     img_filters=None, t_r=None, slice_time_ref=0.,
                     hrf_model='glover', drift_model='cosine',
                     high_pass=.01, drift_order=1, fir_delays=[0],
@@ -173,12 +175,6 @@ class NilearnFirstLevelApp(App):
         """
         # check arguments
         img_filters = img_filters if img_filters else []
-        if not isinstance(dataset_path, str):
-            raise TypeError(
-                'dataset_path must be a string, instead %s was given' %
-                type(task_label))
-        if not os.path.exists(dataset_path):
-            raise ValueError('given path do not exist: %s' % dataset_path)
         if not isinstance(task_label, str):
             raise TypeError('task_label must be a string, instead %s was given' %
                             type(task_label))
@@ -202,12 +198,10 @@ class NilearnFirstLevelApp(App):
                     "'desc', 'res', 'den' are allowed." % img_filter[0])
 
         # check derivatives folder is present
-        derivatives_path = os.path.join(dataset_path, derivatives_folder)
-        if not os.path.exists(derivatives_path):
+        if not layout.dataset.derivatives:
             raise ValueError('derivatives folder does not exist in given dataset')
 
-        layout = ancpbids.BIDSLayout(dataset_path, scope='raw')
-        layout_derivative = ancpbids.BIDSLayout(derivatives_path, scope='raw')
+        schema = layout.schema
 
         # Get acq specs for models. RepetitionTime and SliceTimingReference.
         # Throw warning if no bold.json is found
@@ -221,11 +215,11 @@ class NilearnFirstLevelApp(App):
                 if img_filter[0] in ['acq', 'rec', 'run']:
                     filters[img_filters[0]] = img_filters[1]
 
-            metadata = layout_derivative.get_metadata(suffix=schema.SuffixEnum.bold.name, **filters)
+            metadata = layout.get_metadata(scope=derivatives_folder, suffix='bold', **filters)
             # If we don't find the parameter information in the derivatives folder
             # we try to search in the raw data folder
             if not metadata:
-                metadata = layout.get_metadata(suffix=schema.SuffixEnum.bold.name, **filters)
+                metadata = layout.get_metadata(scope='raw', suffix='bold', **filters)
             if not metadata:
                 warn('No bold.json found in derivatives folder or '
                      'in dataset folder. t_r can not be inferred and will need to'
@@ -278,8 +272,8 @@ class NilearnFirstLevelApp(App):
                 filters = [('task', task_label),
                            ('space', space_label)] + img_filters
             filters = {i[0]: i[1] for i in filters}
-            imgs = layout_derivative.get(suffix=schema.SuffixEnum.bold.name, extension=['.nii', '.nii.gz'],
-                                         subject=sub_label, **filters)
+            imgs = layout.get(scope=derivatives_folder, suffix='bold', extension=['.nii', '.nii.gz'],
+                              subject=sub_label, **filters)
             # If there is more than one file for the same (ses, run), likely we
             # have an issue of underspecification of filters.
             run_check_list = []
@@ -288,12 +282,12 @@ class NilearnFirstLevelApp(App):
             if len(imgs) > 1:
                 for img in imgs:
                     if (
-                            img.has_entity(schema.EntityEnum.session.entity_)
-                            and img.has_entity(schema.EntityEnum.run.entity_)
+                            img.has_entity('ses')
+                            and img.has_entity('run')
                     ):
                         entity = (
-                            img.get_entity(schema.EntityEnum.session.entity_),
-                            img.get_entity(schema.EntityEnum.run.entity_))
+                            img.get_entity('ses'),
+                            img.get_entity('run'))
                         if entity in run_check_list:
                             raise ValueError(
                                 'More than one nifti image found '
@@ -305,8 +299,8 @@ class NilearnFirstLevelApp(App):
                         else:
                             run_check_list.append(entity)
 
-                    elif img.has_entity(schema.EntityEnum.session.entity_):
-                        if img.get_entity(schema.EntityEnum.session.entity_) in run_check_list:
+                    elif img.has_entity('ses'):
+                        if img.get_entity('ses') in run_check_list:
                             raise ValueError(
                                 'More than one nifti image '
                                 'found for the same ses %s, while '
@@ -315,12 +309,12 @@ class NilearnFirstLevelApp(App):
                                 'space_label labels '
                                 'corresponding to the BIDS spec '
                                 'were correctly specified.' %
-                                img.get_entity(schema.EntityEnum.session.entity_))
+                                img.get_entity('ses'))
                         else:
-                            run_check_list.append(img.get_entity(schema.EntityEnum.session.entity_))
+                            run_check_list.append(img.get_entity('ses'))
 
-                    elif img.has_entity(schema.EntityEnum.run.entity_):
-                        if img.get_entity(schema.EntityEnum.run.entity_) in run_check_list:
+                    elif img.has_entity('run'):
+                        if img.get_entity('run') in run_check_list:
                             raise ValueError(
                                 'More than one nifti image '
                                 'found for the same run %s. '
@@ -328,9 +322,9 @@ class NilearnFirstLevelApp(App):
                                 'space_label labels '
                                 'corresponding to the BIDS spec '
                                 'were correctly specified.' %
-                                img.get_entity(schema.EntityEnum.run.entity_))
+                                img.get_entity('run'))
                         else:
-                            run_check_list.append(img.get_entity(schema.EntityEnum.run.entity_))
+                            run_check_list.append(img.get_entity('run'))
             img_paths = list(map(lambda a: a.get_absolute_path(), imgs))
             models_run_imgs.append(img_paths)
 
@@ -341,7 +335,7 @@ class NilearnFirstLevelApp(App):
                     filters.append(img_filter)
             # Get events files
             filters = {i[0]: i[1] for i in filters}
-            events = layout.get(return_type='filenames', suffix=schema.SuffixEnum.events.name, extension='.tsv',
+            events = layout.get(return_type='filenames', suffix='events', extension='.tsv',
                                 subject=sub_label, **filters)
             if events:
                 if len(events) != len(imgs):
@@ -357,8 +351,8 @@ class NilearnFirstLevelApp(App):
 
             # Get confounds. If not found it will be assumed there are none.
             # If there are confounds, they are assumed to be present for all runs.
-            confounds = layout_derivative.get(return_type='filenames', extension='.tsv',
-                                              desc='confounds', subject=sub_label, **filters)
+            confounds = layout.get(scope=derivatives_folder, return_type='filenames', extension='.tsv',
+                                   desc='confounds', subject=sub_label, **filters)
 
             if confounds:
                 if len(confounds) != len(imgs):
@@ -370,4 +364,4 @@ class NilearnFirstLevelApp(App):
                              for c in confounds]
                 models_confounds.append(confounds)
 
-        return models, models_run_imgs, models_events, models_confounds, layout, layout_derivative
+        return models, models_run_imgs, models_events, models_confounds
