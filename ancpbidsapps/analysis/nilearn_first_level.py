@@ -79,7 +79,7 @@ class NilearnFirstLevelApp(App):
             zmap_artifact.add_entity('task', task_label)
             zmap_artifact.suffix = 'zmap'
             zmap_artifact.extension = ".nii.gz"
-            zmap_artifact.content = lambda file_path: zmap.to_filename(file_path)
+            zmap_artifact.content = lambda file_path, z=zmap: z.to_filename(file_path)
 
             plotting.plot_glass_brain(zmap, colorbar=False, threshold=p001_unc,
                                       title=subject.name,
@@ -88,11 +88,11 @@ class NilearnFirstLevelApp(App):
                                       plot_abs=False, display_mode='x')
 
             plot_artifact = subject.create_artifact()
-            plot_artifact.add_entity('descr', "nilearn")
+            plot_artifact.add_entity('desc', "nilearn")
             plot_artifact.add_entity('task', task_label)
             plot_artifact.suffix = "zmap"
             plot_artifact.extension = ".png"
-            plot_artifact.content = lambda file_path: plotting.plot_glass_brain(zmap, colorbar=False,
+            plot_artifact.content = lambda file_path, z=zmap: plotting.plot_glass_brain(z, colorbar=False,
                                                                                 threshold=p001_unc,
                                                                                 title=subject.name,
                                                                                 plot_abs=False, display_mode='x',
@@ -103,7 +103,7 @@ class NilearnFirstLevelApp(App):
         fig.suptitle('subjects z_map contrast %s (unc p<%f)' % (contrast, p001_unc))
 
         fig_artifact = derivative.create_artifact()
-        fig_artifact.add_entity('descr', "nilearn")
+        fig_artifact.add_entity('desc', "nilearn")
         fig_artifact.add_entity('task', task_label)
         fig_artifact.suffix = "zmap"
         fig_artifact.extension = ".png"
