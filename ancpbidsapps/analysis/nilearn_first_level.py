@@ -46,8 +46,8 @@ class NilearnFirstLevelApp(App):
         if img_filters:
             img_filters = list(zip(*(itertools.islice(img_filters, i, None) for i in range(2))))
 
-        layout = ancpbids.BIDSLayout(dataset_path)
-        schema = layout.schema
+        layout = ancpbids.load_dataset(dataset_path)
+        schema = layout.get_schema()
 
         # derive data for fitting
         models, models_run_imgs, models_events, models_confounds = self.first_level(
@@ -93,10 +93,11 @@ class NilearnFirstLevelApp(App):
             plot_artifact.suffix = "zmap"
             plot_artifact.extension = ".png"
             plot_artifact.content = lambda file_path, z=zmap: plotting.plot_glass_brain(z, colorbar=False,
-                                                                                threshold=p001_unc,
-                                                                                title=subject.name,
-                                                                                plot_abs=False, display_mode='x',
-                                                                                output_file=file_path)
+                                                                                        threshold=p001_unc,
+                                                                                        title=subject.name,
+                                                                                        plot_abs=False,
+                                                                                        display_mode='x',
+                                                                                        output_file=file_path)
         # remove empty subplots
         for ax in axes.flat[nsubj:]:
             ax.remove()
